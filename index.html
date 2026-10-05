@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Lift Log</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #fff; --text: #14181f; --muted: #6b7380;
+    --line: #e3e6ea; --accent: #e8590c; --accent-text: #fff; --danger: #d93025;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1013; --card: #181b20; --text: #eef0f3; --muted: #8b93a1;
+      --line: #2a2f37; --accent: #ff7a2f; --accent-text: #111; --danger: #ff6b60;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg);
+    padding: calc(12px + env(safe-area-inset-top)) 16px 10px;
+    display: flex; align-items: center; gap: 8px; }
+  header h1 { font-size: 22px; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .icon-btn { background: none; border: 0; color: var(--text); font-size: 15px; padding: 8px 4px; cursor: pointer; }
+  main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .item { width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; display: block; }
+  .item:active { background: var(--line); }
+  .name { font-weight: 600; font-size: 17px; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .big { font-size: 22px; font-weight: 700; white-space: nowrap; }
+  .big small, .stat small { font-size: 13px; font-weight: 500; color: var(--muted); }
+  .right { text-align: right; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+  .stats .card { margin: 0; }
+  .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .stat .val { font-size: 26px; font-weight: 700; margin-top: 2px; }
+  .stat.wide { grid-column: 1 / -1; }
+  .stat.accent .val { color: var(--accent); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 4px 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 17px; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--muted); width: 25%; }
+  td:last-child { text-align: right; font-weight: 600; }
+  .hist-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .hist-row:last-child { border-bottom: 0; }
+  .hist-row button { background: none; border: 0; color: var(--muted); font-size: 13px; padding: 6px; cursor: pointer; }
+  .empty { text-align: center; color: var(--muted); padding: 48px 16px; }
+  .fab { position: fixed; right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); width: 60px; height: 60px;
+    border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-text); font-size: 34px; line-height: 1;
+    box-shadow: 0 4px 14px rgba(0,0,0,.3); cursor: pointer; z-index: 10; }
+  .fab:active { transform: scale(.95); }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: flex-end; justify-content: center; z-index: 20; }
+  .overlay.open { display: flex; }
+  .sheet { background: var(--card); width: 100%; max-width: 640px; border-radius: 20px 20px 0 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); max-height: 92vh; overflow: auto; }
+  .sheet h3 { margin: 0 0 12px; font-size: 18px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+  input { width: 100%; font: inherit; font-size: 16px; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); }
+  input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .actions { display: flex; gap: 10px; margin-top: 18px; }
+  .btn { flex: 1; padding: 14px; font: inherit; font-weight: 600; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+  .footer-tools { display: flex; gap: 10px; justify-content: center; margin-top: 24px; }
+  .footer-tools button { background: none; border: 0; color: var(--muted); font-size: 13px; text-decoration: underline; cursor: pointer; padding: 8px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <button class="icon-btn" id="back" hidden aria-label="Back">‹ Back</button>
+  <h1 id="title">Lift Log</h1>
+</header>
+<main id="app"></main>
+<button class="fab" id="fab" aria-label="Log workout">+</button>
+
+<div class="overlay" id="overlay">
+  <form class="sheet" id="form" autocomplete="off">
+    <h3 id="sheetTitle">Log workout</h3>
+    <label for="f-ex">Exercise</label>
+    <input id="f-ex" list="exlist" placeholder="e.g. Barbell Front Squat" required>
+    <datalist id="exlist"></datalist>
+    <label for="f-date">Date</label>
+    <input id="f-date" type="date" required>
+    <div class="grid3">
+      <div><label for="f-w">Weight (kg)</label><input id="f-w" type="number" inputmode="decimal" step="any" min="0" required></div>
+      <div><label for="f-r">Reps</label><input id="f-r" type="number" inputmode="numeric" step="1" min="1" required></div>
+      <div><label for="f-s">Sets</label><input id="f-s" type="number" inputmode="numeric" step="1" min="1" value="1" required></div>
+    </div>
+    <div class="hint">Logged as reps × sets, e.g. 5 reps, 3 sets = 5x3.</div>
+    <div class="actions">
+      <button type="button" class="btn" id="cancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</div>
+
+<script>
+const KEY = 'liftlog.v1';
+const PCTS = [90, 80, 70, 60, 50, 40, 30, 20, 10];
+let logs = load();
+let editingId = null;
+
+function load() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; }
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(logs)); } catch { alert('Could not save — storage is blocked or full.'); }
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => (Math.round(n * 10) / 10).toString();
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const fmtDate = iso => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+
+// Epley estimate; a single rep is its own max.
+const est1RM = l => l.reps <= 1 ? l.weight : l.weight * (1 + l.reps / 30);
+
+function summarize(name) {
+  const all = logs.filter(l => l.exercise === name);
+  const latestDate = all.reduce((m, l) => l.date > m ? l.date : m, '');
+  const latest = all.filter(l => l.date === latestDate);
+  const top = latest.reduce((b, l) => est1RM(l) > est1RM(b) ? l : b);
+  return { name, all, latestDate, latest, top, orm: est1RM(top) };
+}
+function exercises() {
+  const names = [...new Set(logs.map(l => l.exercise))];
+  return names.map(summarize).sort((a, b) => b.latestDate.localeCompare(a.latestDate) || a.name.localeCompare(b.name));
+}
+
+function route() { return decodeURIComponent(location.hash.slice(1)); }
+
+function render() {
+  const name = route();
+  const app = document.getElementById('app');
+  const back = document.getElementById('back');
+  const title = document.getElementById('title');
+  if (name && logs.some(l => l.exercise === name)) {
+    back.hidden = false; title.textContent = name;
+    app.innerHTML = detailView(summarize(name));
+  } else {
+    if (name) { history.replaceState(null, '', location.pathname); }
+    back.hidden = true; title.textContent = 'Lift Log';
+    app.innerHTML = listView();
+  }
+  window.scrollTo(0, 0);
+}
+
+function listView() {
+  const ex = exercises();
+  if (!ex.length) return `<div class="empty">No workouts yet.<br>Tap <b>+</b> to log your first one.</div>`;
+  return ex.map(e => `
+    <button class="card item row" data-ex="${esc(e.name)}">
+      <div>
+        <div class="name">${esc(e.name)}</div>
+        <div class="sub">${fmt(e.top.weight)} kg · ${e.top.reps}x${e.top.sets} · ${fmtDate(e.latestDate)}</div>
+      </div>
+      <div class="right"><div class="big">${fmt(e.orm)}<small> kg</small></div><div class="sub">1RM</div></div>
+    </button>`).join('') + `
+    <div class="footer-tools"><button id="export">Export backup</button><button id="import">Import backup</button></div>`;
+}
+
+function detailView(e) {
+  const others = e.latest.filter(l => l !== e.top);
+  const sorted = [...e.all].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  return `
+    <div class="stats">
+      <div class="card stat accent wide"><div class="label">Estimated 1 Rep Max</div><div class="val">${fmt(e.orm)} <small>kg</small></div></div>
+      <div class="card stat"><div class="label">Latest weight</div><div class="val">${fmt(e.top.weight)} <small>kg</small></div></div>
+      <div class="card stat"><div class="label">Latest workout</div><div class="val">${e.top.reps}x${e.top.sets}</div></div>
+      <div class="card stat wide"><div class="label">Date</div><div class="val" style="font-size:20px">${fmtDate(e.latestDate)}</div>
+        ${others.length ? `<div class="sub">Also that day: ${others.map(l => `${fmt(l.weight)} kg ${l.reps}x${l.sets}`).join(', ')}</div>` : ''}</div>
+    </div>
+    <h2>Percentages of 1RM</h2>
+    <div class="card"><table>
+      <tr><td>100%</td><td>${fmt(e.orm)} kg</td></tr>
+      ${PCTS.map(p => `<tr><td>${p}%</td><td>${fmt(e.orm * p / 100)} kg</td></tr>`).join('')}
+    </table></div>
+    <h2>History</h2>
+    <div class="card">${sorted.map(l => `
+      <div class="hist-row row">
+        <div><b>${fmt(l.weight)} kg</b> · ${l.reps}x${l.sets}<div class="sub">${fmtDate(l.date)}</div></div>
+        <div><button data-edit="${l.id}">Edit</button><button data-del="${l.id}">Delete</button></div>
+      </div>`).join('')}</div>`;
+}
+
+/* ---- Sheet ---- */
+const $ = id => document.getElementById(id);
+function openSheet(entry) {
+  editingId = entry ? entry.id : null;
+  $('sheetTitle').textContent = entry ? 'Edit log' : 'Log workout';
+  $('exlist').innerHTML = [...new Set(logs.map(l => l.exercise))].map(n => `<option value="${esc(n)}">`).join('');
+  $('f-ex').value = entry ? entry.exercise : route();
+  $('f-date').value = entry ? entry.date : today();
+  $('f-w').value = entry ? entry.weight : '';
+  $('f-r').value = entry ? entry.reps : '';
+  $('f-s').value = entry ? entry.sets : 1;
+  $('overlay').classList.add('open');
+  setTimeout(() => $(route() || entry ? 'f-w' : 'f-ex').focus(), 50);
+}
+function closeSheet() { $('overlay').classList.remove('open'); }
+
+$('fab').onclick = () => openSheet();
+$('cancel').onclick = closeSheet;
+$('overlay').onclick = e => { if (e.target === $('overlay')) closeSheet(); };
+$('back').onclick = () => { location.hash = ''; };
+window.addEventListener('hashchange', render);
+
+$('form').onsubmit = ev => {
+  ev.preventDefault();
+  const rec = {
+    exercise: $('f-ex').value.trim(),
+    date: $('f-date').value,
+    weight: parseFloat($('f-w').value),
+    reps: parseInt($('f-r').value, 10),
+    sets: parseInt($('f-s').value, 10),
+  };
+  if (!rec.exercise || !rec.date || !(rec.weight >= 0) || !(rec.reps >= 1) || !(rec.sets >= 1)) return;
+  // reuse existing capitalisation if the name matches case-insensitively
+  const match = logs.find(l => l.exercise.toLowerCase() === rec.exercise.toLowerCase());
+  if (match) rec.exercise = match.exercise;
+  if (editingId) {
+    const l = logs.find(x => x.id === editingId);
+    Object.assign(l, rec);
+  } else {
+    logs.push({ id: Date.now(), ...rec });
+  }
+  save(); closeSheet();
+  const target = encodeURIComponent(rec.exercise);
+  if (location.hash.slice(1) === target) render(); else location.hash = target;
+};
+
+$('app').onclick = ev => {
+  const t = ev.target.closest('[data-ex],[data-edit],[data-del],#export,#import');
+  if (!t) return;
+  if (t.dataset.ex) location.hash = encodeURIComponent(t.dataset.ex);
+  else if (t.dataset.edit) openSheet(logs.find(l => l.id == t.dataset.edit));
+  else if (t.dataset.del) {
+    if (confirm('Delete this log entry?')) { logs = logs.filter(l => l.id != t.dataset.del); save(); render(); }
+  } else if (t.id === 'export') {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' }));
+    a.download = `lift-log-${today()}.json`; a.click();
+  } else if (t.id === 'import') {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/json';
+    inp.onchange = async () => {
+      try {
+        const data = JSON.parse(await inp.files[0].text());
+        if (!Array.isArray(data) || !data.every(l => l.exercise && l.date && l.weight >= 0 && l.reps >= 1 && l.sets >= 1)) throw 0;
+        if (confirm(`Replace current data with ${data.length} entries from backup?`)) {
+          logs = data.map((l, i) => ({ id: l.id || Date.now() + i, exercise: l.exercise, date: l.date, weight: +l.weight, reps: +l.reps, sets: +l.sets }));
+          save(); render();
+        }
+      } catch { alert('That file is not a valid backup.'); }
+    };
+    inp.click();
+  }
+};
+
+render();
+</script>
+</body>
+</html>
