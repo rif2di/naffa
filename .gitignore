@@ -1,0 +1,4 @@
+﻿.neon
+.claude/
+node_modules/
+.env*

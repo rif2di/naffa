@@ -79,6 +79,7 @@
 <header>
   <button class="icon-btn" id="back" hidden aria-label="Back">‹ Back</button>
   <h1 id="title">Lift Log</h1>
+  <button class="icon-btn" id="acct" aria-label="Account and sync">Sign in</button>
 </header>
 <main id="app"></main>
 <button class="fab" id="fab" aria-label="Log workout">+</button>
@@ -104,18 +105,123 @@
   </form>
 </div>
 
-<script>
-const KEY = 'liftlog.v1';
+<div class="overlay" id="acctOverlay">
+  <form class="sheet" id="acctForm">
+    <h3 id="acctTitle">Account</h3>
+    <div id="acctSignedOut">
+      <div class="hint" style="margin:0 0 4px">Sign in to sync your workouts across devices. The app works offline without an account.</div>
+      <label for="a-email">Email</label>
+      <input id="a-email" type="email" autocomplete="username" required>
+      <label for="a-pass">Password</label>
+      <input id="a-pass" type="password" autocomplete="current-password" minlength="8" required>
+      <div class="hint" id="acctMsg" style="color:var(--danger)"></div>
+      <div class="actions">
+        <button type="button" class="btn" id="acctClose">Close</button>
+        <button type="submit" class="btn primary" id="acctSubmit">Sign in</button>
+      </div>
+      <div class="footer-tools"><button type="button" id="acctToggle">Create account instead</button></div>
+    </div>
+    <div id="acctSignedIn" hidden>
+      <div class="card"><div class="sub">Signed in as</div><div class="name" id="acctEmail"></div><div class="sub" id="acctStatus"></div></div>
+      <div class="actions">
+        <button type="button" class="btn" id="acctClose2">Close</button>
+        <button type="button" class="btn" id="acctSync">Sync now</button>
+        <button type="button" class="btn" id="acctOut">Sign out</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script type="module">
+const KEY = 'liftlog.v2';
+const OLD_KEY = 'liftlog.v1';
+const NEON_URL = 'https://ep-royal-recipe-b31w9pwn.c-4.ap-southeast-1.aws.neon.tech/neondb';
+const TABLE = 'workout_logs';
 const PCTS = [90, 80, 70, 60, 50, 40, 30, 20, 10];
-let logs = load();
+const uuid = () => crypto.randomUUID();
+let { logs, pending } = load();   // pending: [{op:'up'|'del', id}] waiting to reach the server
 let editingId = null;
+let client = null, session = null, syncState = 'local', signUpMode = false;
 
 function load() {
-  try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; }
+  try {
+    const v2 = JSON.parse(localStorage.getItem(KEY));
+    if (v2 && Array.isArray(v2.logs)) return { logs: v2.logs, pending: v2.pending || [] };
+    // migrate v1 (numeric ids) and queue everything for upload
+    const v1 = JSON.parse(localStorage.getItem(OLD_KEY)) || [];
+    const logs = v1.map(l => ({ ...l, id: uuid() }));
+    return { logs, pending: logs.map(l => ({ op: 'up', id: l.id })) };
+  } catch { return { logs: [], pending: [] }; }
 }
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(logs)); } catch { alert('Could not save — storage is blocked or full.'); }
+  try { localStorage.setItem(KEY, JSON.stringify({ logs, pending })); } catch { alert('Could not save — storage is blocked or full.'); }
 }
+function queue(op, id) {
+  pending = pending.filter(p => p.id !== id);
+  pending.push({ op, id });
+}
+
+/* ---- Sync with Neon (Data API + Neon Auth) ---- */
+const toRow = l => ({ id: l.id, exercise: l.exercise, log_date: l.date, weight: l.weight, reps: l.reps, sets: l.sets });
+const fromRow = r => ({ id: r.id, exercise: r.exercise, date: r.log_date, weight: Number(r.weight), reps: r.reps, sets: r.sets });
+
+function setStatus(s) {
+  syncState = s;
+  const label = { local: 'Sign in', syncing: 'Syncing…', synced: '● Synced', offline: `○ Offline${pending.length ? ' (' + pending.length + ')' : ''}`, error: '⚠ Sync error' }[s];
+  $('acct').textContent = label;
+  $('acctStatus').textContent = { local: '', syncing: 'Syncing…', synced: 'All changes saved to the cloud.', offline: `Offline — ${pending.length} change(s) waiting.`, error: 'Last sync failed. Will retry.' }[s];
+}
+
+let syncing = false, again = false;
+async function sync() {
+  if (!client || !session) return;
+  if (!navigator.onLine) return setStatus('offline');
+  if (syncing) { again = true; return; }
+  syncing = true; setStatus('syncing');
+  try {
+    const ops = pending.slice();
+    const ups = ops.filter(o => o.op === 'up').map(o => logs.find(l => l.id === o.id)).filter(Boolean).map(toRow);
+    const dels = ops.filter(o => o.op === 'del').map(o => o.id);
+    if (ups.length) { const { error } = await client.from(TABLE).upsert(ups); if (error) throw error; }
+    if (dels.length) { const { error } = await client.from(TABLE).delete().in('id', dels); if (error) throw error; }
+    pending = pending.filter(p => !ops.includes(p));
+    const { data, error } = await client.from(TABLE).select('*').limit(10000);
+    if (error) throw error;
+    const up = new Set(pending.filter(p => p.op === 'up').map(p => p.id));
+    const del = new Set(pending.filter(p => p.op === 'del').map(p => p.id));
+    logs = [...data.map(fromRow).filter(l => !up.has(l.id) && !del.has(l.id)), ...logs.filter(l => up.has(l.id))];
+    save(); render(); setStatus('synced');
+  } catch (e) {
+    console.error(e); setStatus(navigator.onLine ? 'error' : 'offline');
+  } finally {
+    syncing = false;
+    if (again) { again = false; sync(); }
+  }
+}
+
+async function initAuth() {
+  try {
+    const { createClient } = await import('https://esm.sh/@neondatabase/neon-js@latest');
+    client = createClient(NEON_URL);
+    const { data } = await client.auth.getSession();
+    session = data?.session ? data : null;
+    showAccount();
+    if (session) sync();
+  } catch (e) { console.error('Auth unavailable', e); setStatus('local'); }
+}
+function showAccount() {
+  $('acctSignedOut').hidden = !!session;
+  $('acctSignedIn').hidden = !session;
+  $('acctTitle').textContent = session ? 'Account' : (signUpMode ? 'Create account' : 'Sign in');
+  $('acctSubmit').textContent = signUpMode ? 'Create account' : 'Sign in';
+  $('acctToggle').textContent = signUpMode ? 'I already have an account' : 'Create account instead';
+  $('a-pass').autocomplete = signUpMode ? 'new-password' : 'current-password';
+  if (session) $('acctEmail').textContent = session.user?.email || '';
+  setStatus(session ? (navigator.onLine ? (pending.length ? 'offline' : 'synced') : 'offline') : 'local');
+}
+window.addEventListener('online', sync);
+window.addEventListener('offline', () => session && setStatus('offline'));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = n => (Math.round(n * 10) / 10).toString();
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
@@ -227,13 +333,15 @@ $('form').onsubmit = ev => {
   // reuse existing capitalisation if the name matches case-insensitively
   const match = logs.find(l => l.exercise.toLowerCase() === rec.exercise.toLowerCase());
   if (match) rec.exercise = match.exercise;
-  if (editingId) {
-    const l = logs.find(x => x.id === editingId);
-    Object.assign(l, rec);
+  let id = editingId;
+  if (id) {
+    Object.assign(logs.find(x => x.id === id), rec);
   } else {
-    logs.push({ id: Date.now(), ...rec });
+    id = uuid();
+    logs.push({ id, ...rec });
   }
-  save(); closeSheet();
+  queue('up', id);
+  save(); closeSheet(); sync();
   const target = encodeURIComponent(rec.exercise);
   if (location.hash.slice(1) === target) render(); else location.hash = target;
 };
@@ -242,9 +350,12 @@ $('app').onclick = ev => {
   const t = ev.target.closest('[data-ex],[data-edit],[data-del],#export,#import');
   if (!t) return;
   if (t.dataset.ex) location.hash = encodeURIComponent(t.dataset.ex);
-  else if (t.dataset.edit) openSheet(logs.find(l => l.id == t.dataset.edit));
+  else if (t.dataset.edit) openSheet(logs.find(l => l.id === t.dataset.edit));
   else if (t.dataset.del) {
-    if (confirm('Delete this log entry?')) { logs = logs.filter(l => l.id != t.dataset.del); save(); render(); }
+    if (confirm('Delete this log entry?')) {
+      const id = t.dataset.del;
+      logs = logs.filter(l => l.id !== id); queue('del', id); save(); render(); sync();
+    }
   } else if (t.id === 'export') {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' }));
@@ -256,8 +367,10 @@ $('app').onclick = ev => {
         const data = JSON.parse(await inp.files[0].text());
         if (!Array.isArray(data) || !data.every(l => l.exercise && l.date && l.weight >= 0 && l.reps >= 1 && l.sets >= 1)) throw 0;
         if (confirm(`Replace current data with ${data.length} entries from backup?`)) {
-          logs = data.map((l, i) => ({ id: l.id || Date.now() + i, exercise: l.exercise, date: l.date, weight: +l.weight, reps: +l.reps, sets: +l.sets }));
-          save(); render();
+          const old = logs;
+          logs = data.map(l => ({ id: uuid(), exercise: l.exercise, date: l.date, weight: +l.weight, reps: +l.reps, sets: +l.sets }));
+          pending = [...old.map(l => ({ op: 'del', id: l.id })), ...logs.map(l => ({ op: 'up', id: l.id }))];
+          save(); render(); sync();
         }
       } catch { alert('That file is not a valid backup.'); }
     };
@@ -265,7 +378,40 @@ $('app').onclick = ev => {
   }
 };
 
+/* ---- Account sheet ---- */
+const openAcct = () => { showAccount(); $('acctMsg').textContent = ''; $('acctOverlay').classList.add('open'); };
+const closeAcct = () => $('acctOverlay').classList.remove('open');
+$('acct').onclick = openAcct;
+$('acctClose').onclick = $('acctClose2').onclick = closeAcct;
+$('acctOverlay').onclick = e => { if (e.target === $('acctOverlay')) closeAcct(); };
+$('acctToggle').onclick = () => { signUpMode = !signUpMode; $('acctMsg').textContent = ''; showAccount(); };
+$('acctSync').onclick = sync;
+$('acctOut').onclick = async () => {
+  try { await client.auth.signOut(); } catch (e) { console.error(e); }
+  session = null; showAccount(); closeAcct();
+};
+$('acctForm').onsubmit = async ev => {
+  ev.preventDefault();
+  if (session) return;
+  if (!client) { $('acctMsg').textContent = 'Sign-in needs an internet connection.'; return; }
+  const email = $('a-email').value.trim(), password = $('a-pass').value;
+  $('acctMsg').textContent = ''; $('acctSubmit').disabled = true;
+  try {
+    const res = signUpMode
+      ? await client.auth.signUp.email({ email, password, name: email.split('@')[0] })
+      : await client.auth.signIn.email({ email, password });
+    if (res.error) throw new Error(res.error.message || 'Something went wrong');
+    const { data } = await client.auth.getSession();
+    session = data?.session ? data : null;
+    if (!session) throw new Error('Signed in, but no session was created.');
+    $('a-pass').value = ''; signUpMode = false; showAccount(); closeAcct(); sync();
+  } catch (e) {
+    $('acctMsg').textContent = e.message;
+  } finally { $('acctSubmit').disabled = false; }
+};
+
 render();
+initAuth();
 </script>
 </body>
 </html>
