@@ -51,6 +51,11 @@
   .hist-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
   .hist-row:last-child { border-bottom: 0; }
   .hist-row button { background: none; border: 0; color: var(--muted); font-size: 13px; padding: 6px; cursor: pointer; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .toolbar input { flex: 1; min-width: 0; background: var(--card); }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); flex: none; }
+  .seg button { border: 0; background: none; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; padding: 0 12px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: var(--accent-text); }
   .empty { text-align: center; color: var(--muted); padding: 48px 16px; }
   .fab { position: fixed; right: 20px; bottom: calc(20px + env(safe-area-inset-bottom)); width: 60px; height: 60px;
     border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-text); font-size: 34px; line-height: 1;
@@ -237,9 +242,15 @@ function summarize(name) {
   const top = latest.reduce((b, l) => est1RM(l) > est1RM(b) ? l : b);
   return { name, all, latestDate, latest, top, orm: est1RM(top) };
 }
+const SORT_KEY = 'liftlog.sort';
+let sortMode = (() => { try { return localStorage.getItem(SORT_KEY) === 'az' ? 'az' : 'latest'; } catch { return 'latest'; } })();
+let query = '';
+
 function exercises() {
   const names = [...new Set(logs.map(l => l.exercise))];
-  return names.map(summarize).sort((a, b) => b.latestDate.localeCompare(a.latestDate) || a.name.localeCompare(b.name));
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  const list = names.map(summarize);
+  return list.sort(sortMode === 'az' ? byName : (a, b) => b.latestDate.localeCompare(a.latestDate) || byName(a, b));
 }
 
 function route() { return decodeURIComponent(location.hash.slice(1)); }
@@ -255,14 +266,31 @@ function render() {
   } else {
     if (name) { history.replaceState(null, '', location.pathname); }
     back.hidden = true; title.textContent = 'Lift Log';
+    const results = document.getElementById('results');
+    if (results && logs.length) { results.innerHTML = resultsHtml(); return; }   // keep search focus & scroll on in-place refresh
     app.innerHTML = listView();
   }
   window.scrollTo(0, 0);
 }
 
 function listView() {
-  const ex = exercises();
-  if (!ex.length) return `<div class="empty">No workouts yet.<br>Tap <b>+</b> to log your first one.</div>`;
+  if (!logs.length) return `<div class="empty">No workouts yet.<br>Tap <b>+</b> to log your first one.</div>`;
+  return `
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search exercises" value="${esc(query)}" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search exercises">
+      <div class="seg" role="group" aria-label="Sort">
+        <button data-sort="latest" class="${sortMode === 'latest' ? 'on' : ''}">Latest</button>
+        <button data-sort="az" class="${sortMode === 'az' ? 'on' : ''}">A–Z</button>
+      </div>
+    </div>
+    <div id="results">${resultsHtml()}</div>
+    <div class="footer-tools"><button id="export">Export backup</button><button id="import">Import backup</button></div>`;
+}
+
+function resultsHtml() {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const ex = exercises().filter(e => terms.every(t => e.name.toLowerCase().includes(t)));
+  if (!ex.length) return `<div class="empty">No exercises match “${esc(query.trim())}”.</div>`;
   return ex.map(e => `
     <button class="card item row" data-ex="${esc(e.name)}">
       <div>
@@ -270,13 +298,12 @@ function listView() {
         <div class="sub">${fmt(e.top.weight)} kg · ${e.top.reps}x${e.top.sets} · ${fmtDate(e.latestDate)}</div>
       </div>
       <div class="right"><div class="big">${fmt(e.orm)}<small> kg</small></div><div class="sub">1RM</div></div>
-    </button>`).join('') + `
-    <div class="footer-tools"><button id="export">Export backup</button><button id="import">Import backup</button></div>`;
+    </button>`).join('');
 }
 
 function detailView(e) {
   const others = e.latest.filter(l => l !== e.top);
-  const sorted = [...e.all].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  const sorted = [...e.all].sort((a, b) => b.date.localeCompare(a.date));
   return `
     <div class="stats">
       <div class="card stat accent wide"><div class="label">Estimated 1 Rep Max</div><div class="val">${fmt(e.orm)} <small>kg</small></div></div>
@@ -347,9 +374,14 @@ $('form').onsubmit = ev => {
 };
 
 $('app').onclick = ev => {
-  const t = ev.target.closest('[data-ex],[data-edit],[data-del],#export,#import');
+  const t = ev.target.closest('[data-ex],[data-edit],[data-del],[data-sort],#export,#import');
   if (!t) return;
-  if (t.dataset.ex) location.hash = encodeURIComponent(t.dataset.ex);
+  if (t.dataset.sort) {
+    sortMode = t.dataset.sort;
+    try { localStorage.setItem(SORT_KEY, sortMode); } catch {}
+    document.querySelectorAll('[data-sort]').forEach(b => b.classList.toggle('on', b.dataset.sort === sortMode));
+    $('results').innerHTML = resultsHtml();
+  } else if (t.dataset.ex) location.hash = encodeURIComponent(t.dataset.ex);
   else if (t.dataset.edit) openSheet(logs.find(l => l.id === t.dataset.edit));
   else if (t.dataset.del) {
     if (confirm('Delete this log entry?')) {
@@ -376,6 +408,12 @@ $('app').onclick = ev => {
     };
     inp.click();
   }
+};
+
+$('app').oninput = ev => {
+  if (ev.target.id !== 'search') return;
+  query = ev.target.value;
+  $('results').innerHTML = resultsHtml();
 };
 
 /* ---- Account sheet ---- */
